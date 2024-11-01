@@ -1,16 +1,31 @@
 import sys
 from PyPDF2 import PdfReader, PdfWriter
+import os
+import time
 
-def split_pdf(input_pdf, document_number, page_range):
+def parse_line(line):
     """
-    Extracts specific pages from a PDF and saves them as a new PDF.
+    Parse each line from the input file into components needed for splitting.
+    
+    :param line: A string containing 'pdf_path document_number page_range'
+    :return: Tuple of (pdf_path, document_number, page_range)
+    """
+    parts = line.strip().split(' ')
+    if len(parts) != 3:
+        raise ValueError(f"Incorrect format in line: {line}")
+    return parts[0], parts[1], parts[2]
 
-    :param input_pdf: Path to the input PDF
+def process_pdf(pdf_path, document_number, page_range, reader):
+    """
+    Extracts specified pages from a PDF and saves them as a new PDF.
+
+    :param pdf_path: Path to the input PDF
     :param document_number: The number to use in the output filename
     :param page_range: String describing the pages to extract
+    :param reader: The PdfReader object for the PDF
     :return: None, saves a new PDF file
     """
-    reader = PdfReader(input_pdf)
+    total_pages = len(reader.pages)
     writer = PdfWriter()
 
     # Parse page range
@@ -23,23 +38,60 @@ def split_pdf(input_pdf, document_number, page_range):
             pages.append(int(part))
     pages = sorted(list(set(pages)))  # Ensure no duplicates and in order
 
-    for page in pages:
-        if page <= len(reader.pages):
+    print(f"Extracting pages {page_range} from {os.path.basename(pdf_path)}")
+
+    for i, page in enumerate(pages, 1):
+        if page <= total_pages:
             writer.add_page(reader.pages[page - 1])  # PyPDF2 uses 0-indexing
+            # print(f"Extracted page {page}")
 
     # Create output filename
-    base_name = input_pdf.split('.')[0]
-    output_file = f"{document_number} {page_range.replace(',', '_')}__ {base_name}.pdf"
+    base_name = os.path.basename(pdf_path).split('.')[0]  # Strip path information
+    output_file = f"{document_number} p{page_range.replace(',', '_')} __ {base_name}.pdf"
     
     with open(output_file, "wb") as output_stream:
         writer.write(output_stream)
-    print(f"Created new PDF: {output_file}")
+    
+    print(f"New PDF saved as: {output_file}")
+
+def split_pdfs_from_file(input_file):
+    """
+    Process a file containing lines of PDF split instructions.
+    
+    :param input_file: Path to the file containing split instructions
+    """
+    current_pdf = None
+    reader = None
+
+    with open(input_file, 'r') as file:
+        for line in file:
+            try:
+                pdf_path, document_number, page_range = parse_line(line)
+                
+                if current_pdf != pdf_path:
+                    if reader:
+                        reader.stream.close()  # Close the previous PDF's stream
+                    reader = PdfReader(pdf_path)
+                    current_pdf = pdf_path
+                
+                start_time = time.time()
+                process_pdf(pdf_path, document_number, page_range, reader)
+                end_time = time.time()
+                print(f"Time taken for this operation: {end_time - start_time:.2f} seconds.")
+                print("-" * 50)  # Visual separator for each operation
+
+            except Exception as e:
+                print(f"Error processing line '{line.strip()}': {str(e)}")
+                continue
+
+    if reader:
+        reader.stream.close()  # Ensure the last opened PDF is closed
 
 # Main execution
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print("Usage: python woo-extract.py <input_pdf> <document_number> <page_ranges>")
+    if len(sys.argv) != 2:
+        print("Usage: python woo-extract.py <instructions_file>")
         sys.exit(1)
 
-    input_pdf, document_number, page_range = sys.argv[1], sys.argv[2], sys.argv[3]
-    split_pdf(input_pdf, document_number, page_range)
+    instructions_file = sys.argv[1]
+    split_pdfs_from_file(instructions_file)
