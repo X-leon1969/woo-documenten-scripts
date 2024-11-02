@@ -101,20 +101,23 @@ def process_directory(directory):
     pdf_files = [f for f in os.listdir(directory) if f.lower().endswith('.pdf')]
     total_files = len(pdf_files)
     print(f"Found {total_files} PDF files in {directory} to process.")
+    item_number = 0
     
     for index, pdf_file in enumerate(pdf_files, start=1):
+        item_number = item_number + 1
+        # print(f"---- ({item_number}/{total_files}) ----")
         pdf_path = os.path.join(directory, pdf_file)
         if not is_pdf_searchable(pdf_path):
             # First, copy the original PDF to the non-searchable directory
             new_name = os.path.splitext(pdf_file)[0] + "_ns.pdf"
             new_path = os.path.join(non_searchable_dir, new_name)
             shutil.copy(pdf_path, new_path)
-            print(f"Copied {pdf_file} to {new_path}")
+            print(f"({item_number}/{total_files}) Copied {pdf_file} to {new_path}")
             
             # Then, process the PDF to make it searchable, overwriting the original
             process_single_pdf(pdf_path, directory)
         else:
-            print(f"File {pdf_file} is already searchable. Skipping.")
+            print(f"({item_number}/{total_files}) File {pdf_file} is already searchable. Skipping.")
 
 def main():
     if len(sys.argv) != 2:
@@ -142,8 +145,10 @@ def main():
                 print(f"File {os.path.basename(path)} is already searchable. Skipping.")
         else:
             print("The file provided is not a PDF.")
+            
     elif os.path.isdir(path):
         process_directory(path)
+        
     else:
         print("Invalid path provided. It must be either a PDF file or a directory.")
 
