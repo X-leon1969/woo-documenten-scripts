@@ -72,18 +72,6 @@ def extract_document_number(page, page_num, total_pages, corner):
         :param page_number: Page number to extract from (default is 0 for the first page)
         :return: Extracted document number or None if not found
         """
-        # Open the PDF file
-        # document = fitz.open(input_pdf)
-        
-        # if page_number >= len(document):
-            # print(f"Error: Page {page_number} not found in {input_pdf}")
-            # return None
-
-        # Get the page
-        # page = document[page_number]
-        # pix = page.get_pixmap(matrix=fitz.Matrix(300/72, 300/72))  # Render at 300 DPI for better OCR
-        # img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        
         # Convert PIL Image to numpy array for OpenCV
         np_img = np.array(img)
 
@@ -196,8 +184,9 @@ def process_pdf(input_pdf, corner):
 # Main execution
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python script.py <input_pdf> <corner>")
+        print("Usage: python woo-extract-docnr.py <input_pdf> <corner>")
         print("Example corners: 'top-left', 'top-right', 'bottom-left', 'bottom-right'")
+        print("Output <input_pdf>.txt in which is listed the docnr and page range. Input for woo-extract.py.")
         sys.exit(1)
 
     input_pdf, corner = sys.argv[1], sys.argv[2]
