@@ -12,6 +12,7 @@ import shutil
 import math
 import argparse
 import subprocess
+import re
 
 # Global configuration
 VERBOSE_MODE = False
@@ -349,14 +350,7 @@ def get_file_size(url):
             return int(length_match.group(1))
     return None
 
-def download_from_excel(excel_file, download_path, max_files=None):
-    """
-    Download files listed in an Excel file to a specified directory.
-
-    :param excel_file: Path to Excel file containing URLs to download
-    :param download_path: Directory to download files to
-    :param max_files: Maximum number of files to download, None for all
-    """
+def download_from_excel(excel_file, download_path, max_files=None, force=False):
     global VERBOSE_MODE
 
     if not os.path.exists(excel_file):
@@ -366,26 +360,40 @@ def download_from_excel(excel_file, download_path, max_files=None):
     wb = load_workbook(excel_file)
     ws = wb['results']
     
-    # Find the column index for "Archive Link"
+    # Find the column indices for all the metadata we need
     header = next(ws.iter_rows(min_row=1, max_row=1, values_only=True))
     try:
-        archive_link_column = [cell for cell in header if cell == "Archive Link"][0]
-        archive_link_index = header.index(archive_link_column)
-    except IndexError:
-        print_message("Debug: No 'Archive Link' column found in the Excel file.", is_debug=False)
+        title_column = header.index("Title")
+        document_count_column = header.index("Document Count")
+        disclosure_type_column = header.index("Disclosure Type")
+        publication_date_column = header.index("Publication Date")
+        dossier_number_column = header.index("Dossier Number")
+        archive_link_column = header.index("Archive Link")
+    except ValueError as e:
+        print_message(f"Debug: Metadata column not found: {e}", is_debug=True)
         return
 
-    # Collect all archive links
-    archive_links = [row[archive_link_index] for row in ws.iter_rows(min_row=2, values_only=True) if row[archive_link_index]]
+    # Collect all archive links with metadata
+    metadata = [
+        {
+            'archive_link': row[archive_link_column],
+            'title': row[title_column],
+            'document_count': row[document_count_column],
+            'disclosure_type': row[disclosure_type_column],
+            'publication_date': row[publication_date_column],
+            'dossier_number': row[dossier_number_column]
+        }
+        for row in ws.iter_rows(min_row=2, values_only=True) if row[archive_link_column]
+    ]
     
     # Count total and unique links
-    total_links = len(archive_links)
-    unique_links = len(set(archive_links))
+    total_links = len(metadata)
+    unique_links = len(set(entry['archive_link'] for entry in metadata))
 
     print_message(f"Total rows with links: {total_links}")
     print_message(f"Unique download links: {unique_links}")
 
-    if not archive_links:
+    if not metadata:
         print_message("No download links found.", is_debug=False)
         return
 
@@ -394,14 +402,15 @@ def download_from_excel(excel_file, download_path, max_files=None):
 
     # Process links
     downloaded_files_count = 0
-    for archive_link in list(dict.fromkeys(archive_links)):
+    for entry in metadata:
+        archive_link = entry['archive_link']
         if max_files is not None and downloaded_files_count >= max_files:
-            print_message(f"Reached the maximum number of files to download ({max_files}). Stopping.")
+            print_message(f"Reached the maximum number of files to download ({max_files}). Stopping.", is_debug=False)
             break
 
+        print_message(f"   ", is_debug=False)
         print_message(f"Fetching: {archive_link}", is_debug=False)
 
-        # Get the suggested file name
         try:
             response = requests.head(archive_link, allow_redirects=True, timeout=10)
             suggested_file_name = extract_filename_from_headers(response)
@@ -409,40 +418,46 @@ def download_from_excel(excel_file, download_path, max_files=None):
                 suggested_file_name = urllib.parse.unquote(archive_link.split('/')[-1])
             
             local_file_path = os.path.join(download_path, suggested_file_name)
+            print_message(f"Local File Name: {suggested_file_name}", is_debug=False)
 
-            # Use wget to download with resume capability
+            if os.path.exists(local_file_path):
+                file_size = os.path.getsize(local_file_path)
+                print_message(f"File already exists with size: {file_size} bytes", is_debug=False)
+                if not force:
+                    print_message(f"Skipping {suggested_file_name} since it already exists and --force not used.", is_debug=False)
+                    continue
+
+            # Display metadata before download
+            print_message(f"Metadata:", is_debug=False)
+            print_message(f"  - Title: {entry['title']}", is_debug=False)
+            print_message(f"  - Document Count: {entry['document_count']}", is_debug=False)
+            print_message(f"  - Disclosure Type: {entry['disclosure_type']}", is_debug=False)
+            print_message(f"  - Publication Date: {entry['publication_date']}", is_debug=False)
+            print_message(f"  - Dossier Number: {entry['dossier_number']}", is_debug=False)
+
             try:
-                wget_command = f'wget -c -O "{local_file_path}" "{archive_link}"'
+                wget_command = f'wget -N -c -O "{local_file_path}" "{archive_link}" --progress=dot:giga'
                 
-                # For progress output, we'll use wget's --progress=dot:giga option
-                wget_command += ' --progress=dot:giga'
+                process = subprocess.Popen(wget_command, shell=True)
                 
-                process = subprocess.Popen(wget_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                
-                # Monitor the download process
-                while True:
-                    output = process.stdout.readline().decode('utf-8')
-                    if output == '' and process.poll() is not None:
-                        break
-                    if output:
-                        print_message(f"Download progress: {output.strip()}", is_debug=False)
-                
-                # Check if download was successful
+                process.wait()
+
                 if process.returncode != 0:
-                    error = process.stderr.read().decode('utf-8')
-                    print_message(f"Failed to download {archive_link}. Error: {error}", is_debug=False)
+                    print_message(f"Failed to download {archive_link}. Error: {process.returncode}", is_debug=False)
                 else:
                     downloaded_files_count += 1
-                    print_message(f"Successfully downloaded {suggested_file_name}", is_debug=False)
+                    print_message(f"Successfully downloaded or updated {suggested_file_name}", is_debug=False)
 
             except Exception as e:
                 print_message(f"An error occurred while downloading {archive_link}: {str(e)}", is_debug=True)
-
+            
+            print_message(f"  - ")
+            
         except requests.RequestException as e:
             print_message(f"Failed to retrieve headers for {archive_link}. Error: {e}", is_debug=True)
 
-    print_message("Finished processing links.")
-
+    print_message("Finished processing links.", is_debug=False)
+    
 def about_message():
     """
     Display information about the script.
@@ -510,6 +525,7 @@ def main():
     parser.add_argument('--verbose', action='store_true', help="Print all messages including debug to screen.")
     parser.add_argument('--quiet', action='store_true', help="Suppress all messages.")
     parser.add_argument('--files', type=int, help="Number of files to download. If omitted, all files are downloaded.")
+    parser.add_argument('--force', action='store_true', help="Force download even if file exists locally.")
     
     args, unknown = parser.parse_known_args()
 
@@ -536,7 +552,7 @@ def main():
         if os.path.exists(excel_file):
             print_message(f"Results file '{excel_file}' already exists. Skipping fetching results pages.", is_debug=False)
             download_path = args.download.strip('"').strip("'")
-            download_from_excel(excel_file, download_path, args.files)
+            download_from_excel(excel_file, download_path, args.files, args.force)
             return
 
     # Fetching and processing results pages
